@@ -11,8 +11,8 @@ import os
 
 # Branding from Research Paper: FacialOcclusionNet (FONet)
 st.set_page_config(page_title="FacialOcclusionNet", layout="centered")
-st.title("FacialOcclusionNet")
-st.write("Real-Time Research Demo")
+st.title("🛡️ FacialOcclusionNet")
+st.write("Real-Time Research Demo: MobileNetV1 + Priority-Locked Heuristics")
 
 RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
@@ -39,33 +39,29 @@ class FacialOcclusionProcessor:
         return cv2.Laplacian(gray, cv2.CV_64F).var()
 
     def has_n95_characteristics(self, region, texture_var):
-        """Balanced heuristics to distinguish medical N95 from normal cloth."""
         if region is None or region.size == 0: return False
         hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-        
-        # BALANCED: Loosened Saturation (S < 65) to handle shadows on real N95
-        # V remains at 140 to ensure it's a bright medical-grade material.
-        lower_white = np.array([0, 0, 140]) 
-        upper_white = np.array([180, 65, 255]) 
+        # N95: Very low saturation (white) and high brightness
+        lower_white = np.array([0, 0, 150]) 
+        upper_white = np.array([180, 50, 255]) 
         white_mask = cv2.inRange(hsv, lower_white, upper_white)
-        
         white_ratio = np.sum(white_mask == 255) / float(region.size/3)
-        
-        # N95 texture is fine. Normal cloth (like your striped one) is too 'rough'.
         return white_ratio > 0.65 and 30 < texture_var < 160
 
     def has_surgical_characteristics(self, region):
         if region is None or region.size == 0: return False
         hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-        lower_med = np.array([75, 40, 40]) 
+        # TIGHTENED: Higher saturation requirement to separate from off-white N95
+        lower_med = np.array([75, 60, 50]) 
         upper_med = np.array([140, 255, 255])
         med_mask = cv2.inRange(hsv, lower_med, upper_med)
-        return (np.sum(med_mask == 255) / float(region.size/3)) > 0.30
+        return (np.sum(med_mask == 255) / float(region.size/3)) > 0.35
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         h, w, _ = img.shape
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        
         face_results = self.detector.detect(mp_image)
         hand_results = self.landmarker.detect(mp_image)
 
@@ -87,7 +83,6 @@ class FacialOcclusionProcessor:
                     if hand_results.hand_landmarks:
                         for hand_lms in hand_results.hand_landmarks:
                             for lm in hand_lms:
-                                # Expanded check for hand anywhere in face region
                                 if fx-20 < int(lm.x * w) < fx+fw+20 and fy-20 < int(lm.y * h) < fy+fh+20:
                                     hand_near = True; break
 
@@ -97,25 +92,30 @@ class FacialOcclusionProcessor:
                     if is_masked_by_model and lower_half.size > 0:
                         texture_var = self.get_texture_variance(lower_half)
                         is_n95 = self.has_n95_characteristics(lower_half, texture_var)
-                        is_surg = self.has_surgical_characteristics(lower_half)
                         
-                        # Smooth transition logic
-                        self.n95_counter = min(self.n95_counter + 3, 12) if is_n95 else max(self.n95_counter - 1, 0)
-                        self.surg_counter = min(self.surg_counter + 3, 12) if is_surg else max(self.surg_counter - 1, 0)
+                        # PRIORITY LOCK: Only check surgical if N95 counter is low
+                        if is_n95:
+                            self.n95_counter = min(self.n95_counter + 3, 15)
+                            self.surg_counter = max(self.surg_counter - 2, 0)
+                        else:
+                            self.n95_counter = max(self.n95_counter - 1, 0)
+                            if self.n95_counter < 3: # Only allow Surgical if N95 isn't dominating
+                                is_surg = self.has_surgical_characteristics(lower_half)
+                                self.surg_counter = min(self.surg_counter + 3, 15) if is_surg else max(self.surg_counter - 1, 0)
 
                         if hand_near:
                             label, color = "No Mask (Occlusion)", (0, 165, 255)
-                        elif self.n95_counter > 4:
+                        elif self.n95_counter > 5:
                             label, color = "N95 Mask", (0, 255, 0)
-                        elif self.surg_counter > 4:
+                        elif self.surg_counter > 5:
                             label, color = "Surgical Mask", (255, 255, 0)
                         elif 15 < texture_var < 200:
                             label, color = "Local/Cloth Mask", (139, 0, 0)
                         else:
                             label, color = "No Mask (Occlusion)", (0, 165, 255)
 
-                    cv2.rectangle(img, (fx, fy), (fx+fw, fy+fh), color, 2)
-                    cv2.putText(img, label, (fx, fy-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                cv2.rectangle(img, (fx, fy), (fx+fw, fy+fh), color, 2)
+                cv2.putText(img, label, (fx, fy-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         return frame.from_ndarray(img, format="bgr24")
 
