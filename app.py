@@ -1,94 +1,65 @@
-import os
+import streamlit as st
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import cv2
 import numpy as np
 import tensorflow as tf
-import keras 
 import mediapipe as mp
-import streamlit as st
 
-# ============================================================
-# APP CONFIG & MODEL LOADING
-# ============================================================
-st.set_page_config(page_title="FacialOcclusionNet Demo", layout="centered")
-st.title("FacialOcclusionNet")
-st.caption("Proof of Work: Mask Detection for Low-End Devices")
+# Branding based on your Research Paper
+st.title("🛡️ FacialOcclusionNet: Real-Time")
+st.write("Live Research Demo: MobileNetV1 + Heuristics")
 
-@st.cache_resource
-def load_model():
-    # We use the TFLite version we generated earlier for mobile speed
-    interpreter = tf.lite.Interpreter(model_path="mask_model_mobile.tflite")
-    interpreter.allocate_tensors()
-    return interpreter
+class FacialOcclusionNet(VideoTransformerBase):
+    def __init__(self):
+        # 1. Load optimized model
+        self.interpreter = tf.lite.Interpreter(model_path="mask_model_mobile.tflite")
+        self.interpreter.allocate_tensors()
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        
+        # 2. Setup Mediapipe (More robust for mobile than Haar)
+        self.mp_face = mp.solutions.face_detection.FaceDetection(min_detection_confidence=0.5)
 
-interpreter = load_model()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        
+        # Detect Faces
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = self.mp_face.process(img_rgb)
 
-# ============================================================
-# REFINED HEURISTICS (FROM YOUR CODE)
-# ============================================================
+        if results.detections:
+            for detection in results.detections:
+                bbox = detection.location_data.relative_bounding_box
+                h, w, _ = img.shape
+                x, y, bw, bh = int(bbox.xmin * w), int(bbox.ymin * h), int(bbox.width * w), int(bbox.height * h)
+                
+                # Preprocess for MobileNetV1 (150x150)
+                face_roi = img[max(0,y):y+bh, max(0,x):x+bw]
+                if face_roi.size > 0:
+                    input_roi = cv2.resize(face_roi, (150, 150))
+                    input_roi = np.expand_dims(input_roi.astype('float32') / 255.0, axis=0)
+                    
+                    # Inference
+                    self.interpreter.set_tensor(self.input_details[0]['index'], input_roi)
+                    self.interpreter.invoke()
+                    pred = self.interpreter.get_tensor(self.output_details[0]['index'])[0][0]
+                    
+                    # Heuristics: Texture analysis for N95 detection
+                    gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
+                    variance = cv2.Laplacian(gray_roi, cv2.CV_64F).var()
+                    
+                    # Classification Logic from your script
+                    if pred < 0.5:
+                        label = "N95 Mask" if variance > 35 else "Surgical Mask"
+                        color = (0, 255, 0)
+                    else:
+                        label = "No Mask"
+                        color = (0, 0, 255)
 
-def get_texture_variance(region):
-    if region is None or region.size == 0: return 0
-    gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-    return cv2.Laplacian(gray, cv2.CV_64F).var()
+                    cv2.rectangle(img, (x, y), (x+bw, y+bh), color, 2)
+                    cv2.putText(img, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-def has_n95_characteristics(region, texture_var):
-    if region is None or region.size == 0: return False
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    lower_white = np.array([0, 0, 130]) 
-    upper_white = np.array([180, 65, 255])
-    white_mask = cv2.inRange(hsv, lower_white, upper_white)
-    white_ratio = np.sum(white_mask == 255) / float(region.size/3)
-    return white_ratio > 0.55 and texture_var > 30
+        return img
 
-def has_surgical_characteristics(region):
-    if region is None or region.size == 0: return False
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    lower_med = np.array([75, 40, 40]) 
-    upper_med = np.array([140, 255, 255])
-    med_mask = cv2.inRange(hsv, lower_med, upper_med)
-    med_ratio = np.sum(med_mask == 255) / float(region.size/3)
-    return med_ratio > 0.30
-
-# ============================================================
-# DEPLOYMENT INTERFACE
-# ============================================================
-img_file = st.camera_input("Scan for FacialOcclusionNet Analysis")
-
-if img_file:
-    # 1. Image Decode
-    file_bytes = np.asarray(bytearray(img_file.read()), dtype=np.uint8)
-    frame = cv2.imdecode(file_bytes, 1)
-    
-    # 2. Deep Learning Classification (TFLite Inference)
-    resized = cv2.resize(frame, (150, 150))
-    inp = np.expand_dims(resized.astype("float32") / 255.0, axis=0)
-    interpreter.set_tensor(input_details[0]['index'], inp)
-    interpreter.invoke()
-    prediction = interpreter.get_tensor(output_details[0]['index'])[0][0]
-    is_masked = prediction < 0.5
-
-    # 3. Apply Heuristics (Lower Half Analysis)
-    h, w, _ = frame.shape
-    lower_half = frame[h//2:h, :]
-    
-    texture_var = get_texture_variance(lower_half)
-    n95_detected = has_n95_characteristics(lower_half, texture_var)
-    surg_detected = has_surgical_characteristics(lower_half)
-
-    # 4. Final Classification Logic
-    if not is_masked:
-        label, color = "No Mask", "red"
-    else:
-        if n95_detected:
-            label, color = "N95 Mask", "green"
-        elif surg_detected:
-            label, color = "Surgical Mask", "blue" # (Shown as Cyan in UI)
-        elif texture_var > 18:
-            label, color = "Local/Cloth Mask", "gray" # Subtle dark color
-        else:
-            label, color = "No Mask (Occlusion)", "orange"
-
-    st.subheader(f"Result: :{color}[{label}]")
-    st.write(f"Texture Variance: {texture_var:.2f}")
+# Start Real-Time Stream
+webrtc_streamer(key="facial-occlusion-net", video_transformer_factory=FacialOcclusionNet)
