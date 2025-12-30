@@ -3,6 +3,7 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import cv2
 import numpy as np
 import tensorflow as tf
+import keras 
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -17,18 +18,16 @@ RTC_CONFIG = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:
 
 class FacialOcclusionProcessor:
     def __init__(self):
-        # 1. Load optimized TFLite model
-        self.interpreter = tf.lite.Interpreter(model_path="mask_model_mobile.tflite")
-        self.interpreter.allocate_tensors()
-        self.input_details = self.interpreter.get_input_details()
-        self.output_details = self.interpreter.get_output_details()
+        # 1. FIXED: Loading the original high-accuracy model instead of Lite
+        # compile=False is used for maximum environment compatibility
+        self.model = keras.models.load_model('best_model.keras', compile=False)
         
         # 2. Setup MediaPipe Face Detector (Tasks API)
         face_base_options = python.BaseOptions(model_asset_path='face_detector.tflite')
         face_options = vision.FaceDetectorOptions(base_options=face_base_options)
         self.detector = vision.FaceDetector.create_from_options(face_options)
 
-        # 3. Setup NEW MediaPipe Hand Landmarker (Tasks API - Replacing mp.solutions.hands)
+        # 3. Setup Hands for Occlusion Logic
         hand_base_options = python.BaseOptions(model_asset_path='hand_landmarker.task')
         hand_options = vision.HandLandmarkerOptions(base_options=hand_base_options, num_hands=1)
         self.landmarker = vision.HandLandmarker.create_from_options(hand_options)
@@ -64,9 +63,8 @@ class FacialOcclusionProcessor:
         img = frame.to_ndarray(format="bgr24")
         h, w, _ = img.shape
 
-        # Convert to MediaPipe Image for both Face and Hand detection
+        # Convert to MediaPipe Image
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        
         face_results = self.detector.detect(mp_image)
         hand_results = self.landmarker.detect(mp_image)
 
@@ -79,15 +77,13 @@ class FacialOcclusionProcessor:
                 face_roi = img[fy:fy+fh, fx:fx+fw]
                 if face_roi.size == 0: continue
 
-                # Deep Learning Classification (MobileNetV1)
+                # Full accuracy Keras Model Inference
                 resized = cv2.resize(face_roi, (150, 150))
                 normalized = np.expand_dims(resized.astype("float32") / 255.0, axis=0)
-                self.interpreter.set_tensor(self.input_details[0]['index'], normalized)
-                self.interpreter.invoke()
-                prediction = self.interpreter.get_tensor(self.output_details[0]['index'])[0][0]
+                prediction = float(self.model.predict(normalized, verbose=0)[0][0])
                 is_masked_by_model = prediction < 0.5
 
-                # Hand near face check using new Tasks API Landmarks
+                # Hand check
                 hand_near = False
                 if hand_results.hand_landmarks:
                     for hand_lms in hand_results.hand_landmarks:
@@ -96,26 +92,23 @@ class FacialOcclusionProcessor:
                             if fx < cx < fx+fw and fy < cy < fy+fh:
                                 hand_near = True; break
 
-                # Lower half analysis
                 lower_y = fy + fh // 2
                 lower_roi = img[lower_y:fy+fh, fx:fx+fw]
                 
                 label = "No Mask"
-                color = (0, 0, 255) # Red
+                color = (0, 0, 255) 
 
                 if is_masked_by_model and lower_roi.size > 0:
                     texture_var = self.get_texture_variance(lower_roi)
                     surg_detected = self.has_surgical_characteristics(lower_roi)
                     n95_detected = self.has_n95_characteristics(lower_roi, texture_var)
                     
-                    # Update Hysteresis Counters (Your exact stabilization logic)
                     if n95_detected: self.n95_counter = min(self.n95_counter + 3, 12)
                     else: self.n95_counter = max(self.n95_counter - 1, 0)
                     
                     if surg_detected: self.surg_counter = min(self.surg_counter + 3, 12)
                     else: self.surg_counter = max(self.surg_counter - 1, 0)
 
-                    # --- FINAL STABILIZED LOGIC ---
                     if hand_near:
                         label, color = "No Mask (Occlusion)", (0, 165, 255)
                     elif self.n95_counter > 4:
@@ -123,7 +116,7 @@ class FacialOcclusionProcessor:
                     elif self.surg_counter > 4:
                         label, color = "Surgical Mask", (255, 255, 0)
                     elif texture_var > 18:
-                        label, color = "Local/Cloth Mask", (139, 0, 0) # Dark Blue
+                        label, color = "Local/Cloth Mask", (139, 0, 0)
                     else:
                         label, color = "No Mask (Occlusion)", (0, 165, 255)
 
@@ -138,5 +131,11 @@ webrtc_streamer(
     rtc_configuration=RTC_CONFIG,
     video_processor_factory=FacialOcclusionProcessor,
     media_stream_constraints={"video": True, "audio": False},
-    async_processing=True,
+    # REMOVES VIDEO PLAYER CONTROLS
+    video_html_attrs={
+        "style": {"width": "100%", "border": "2px solid #555"},
+        "controls": False,
+        "autoPlay": True,
+    },
+    async_processing=True, # HIGHER FPS
 )
