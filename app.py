@@ -23,14 +23,15 @@ class FacialOcclusionProcessor:
         self.input_details = self.interpreter.get_input_details()
         self.output_details = self.interpreter.get_output_details()
         
-        # 2. Setup NEW MediaPipe Face Detector (Tasks API)
-        base_options = python.BaseOptions(model_asset_path='face_detector.tflite')
-        options = vision.FaceDetectorOptions(base_options=base_options)
-        self.detector = vision.FaceDetector.create_from_options(options)
+        # 2. Setup MediaPipe Face Detector (Tasks API)
+        face_base_options = python.BaseOptions(model_asset_path='face_detector.tflite')
+        face_options = vision.FaceDetectorOptions(base_options=face_base_options)
+        self.detector = vision.FaceDetector.create_from_options(face_options)
 
-        # 3. Setup Hands for Occlusion Logic
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7)
+        # 3. Setup NEW MediaPipe Hand Landmarker (Tasks API - Replacing mp.solutions.hands)
+        hand_base_options = python.BaseOptions(model_asset_path='hand_landmarker.task')
+        hand_options = vision.HandLandmarkerOptions(base_options=hand_base_options, num_hands=1)
+        self.landmarker = vision.HandLandmarker.create_from_options(hand_options)
 
         # 4. Persistence Counters (Exactly as per your logic)
         self.n95_counter = 0 
@@ -63,12 +64,11 @@ class FacialOcclusionProcessor:
         img = frame.to_ndarray(format="bgr24")
         h, w, _ = img.shape
 
-        # Face Detection
+        # Convert to MediaPipe Image for both Face and Hand detection
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        face_results = self.detector.detect(mp_image)
         
-        # Hand Detection for Occlusion check
-        hand_results = self.hands.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        face_results = self.detector.detect(mp_image)
+        hand_results = self.landmarker.detect(mp_image)
 
         if face_results.detections:
             for detection in face_results.detections:
@@ -87,11 +87,11 @@ class FacialOcclusionProcessor:
                 prediction = self.interpreter.get_tensor(self.output_details[0]['index'])[0][0]
                 is_masked_by_model = prediction < 0.5
 
-                # Hand near face check
+                # Hand near face check using new Tasks API Landmarks
                 hand_near = False
-                if hand_results.multi_hand_landmarks:
-                    for hand_lms in hand_results.multi_hand_landmarks:
-                        for lm in hand_lms.landmark:
+                if hand_results.hand_landmarks:
+                    for hand_lms in hand_results.hand_landmarks:
+                        for lm in hand_lms:
                             cx, cy = int(lm.x * w), int(lm.y * h)
                             if fx < cx < fx+fw and fy < cy < fy+fh:
                                 hand_near = True; break
