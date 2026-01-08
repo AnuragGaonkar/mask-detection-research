@@ -98,4 +98,4 @@ streamlit run app.py
 ## Contact and Links
 **Anurag Gaonkar** - [GitHub](https://github.com/AnuragGaonkar) | [LinkedIn](https://www.linkedin.com/in/anurag-gaonkar-68a463261)
 
-Project Link: [https://github.com/AnuragGaonkar/STEPPING-STONE-SOLUTION](https://github.com/AnuragGaonkar/STEPPING-STONE-SOLUTION)
+Project Link: [https://github.com/AnuragGaonkar/mask-detection-research](https://github.com/AnuragGaonkar/mask-detection-research)
