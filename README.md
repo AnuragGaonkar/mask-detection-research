@@ -20,30 +20,28 @@
 ---
 
 ## Research Summary
-[cite_start]**Lead Author:** Anurag Gaonkar [cite: 31]
-[cite_start]**Publication:** FacialOcclusionNet: A Novel Real Time Face Mask Detection Model [cite: 29, 42]
+**Lead Author:** Anurag Gaonkar
+**Publication:** FacialOcclusionNet: A Novel Real Time Face Mask Detection Model
 
-[cite_start]FacialOcclusionNet (FONet) addresses the critical need for automated health compliance monitoring in high-traffic environments like airports and hospitals[cite: 74, 97]. [cite_start]While traditional models struggle with occlusions (e.g., hands covering the face), FONet utilizes a fine-tuned MobileNet architecture to achieve high-speed inference without sacrificing accuracy[cite: 68, 155].
+FacialOcclusionNet (FONet) addresses the critical need for automated health compliance monitoring in high-traffic environments like airports and hospitals. While traditional models struggle with occlusions (e.g., hands covering the face), FONet utilizes a fine-tuned MobileNet architecture to achieve high-speed inference without sacrificing accuracy.
 
-### [cite_start]Key Performance Metrics [cite: 32, 72]
-* [cite_start]**Test Accuracy:** 99.34% [cite: 32, 72]
-* [cite_start]**Precision:** 99.73% [cite: 32]
-* [cite_start]**Recall:** 98.95% [cite: 32]
-* [cite_start]**F1-Score:** 99.33% [cite: 32]
+### Key Performance Metrics
+* **Test Accuracy:** 99.34%
+* **Precision:** 99.73%
+* **Recall:** 98.95%
+* **F1-Score:** 99.33%
 
 ---
 
 ## Technical Architecture
-[cite_start]The model utilizes transfer learning with a **MobileNetV2** backbone, optimized for edge devices[cite: 170, 216].
+The model utilizes transfer learning with a **MobileNetV2** backbone, optimized for edge devices.
 
-
-
-* [cite_start]**Preprocessing:** Automated $150 \times 150$ pixel resizing, grayscale normalization, and extensive data augmentation including rotation, zoom, and horizontal flipping[cite: 163, 165].
+* **Preprocessing:** Automated $150 \times 150$ pixel resizing, grayscale normalization, and extensive data augmentation including rotation, zoom, and horizontal flipping.
 * **Architecture Highlights:**
-    * [cite_start]Frozen base layers from ImageNet to retain robust low-level feature extraction[cite: 171, 199].
-    * [cite_start]Custom top layers including Global Average Pooling 2D, a 128-neuron Dense layer with ReLU activation, and a 50% Dropout layer for regularization[cite: 173, 175, 176].
-    * [cite_start]Final Sigmoid activation for robust binary classification[cite: 177].
-* [cite_start]**Occlusion Handling:** Specifically trained to distinguish between medical masks and non-mask occlusions such as hands or clothing[cite: 317].
+    * Frozen base layers from ImageNet to retain robust low-level feature extraction.
+    * Custom top layers including Global Average Pooling 2D, a 128-neuron Dense layer with ReLU activation, and a 50% Dropout layer for regularization.
+    * Final Sigmoid activation for robust binary classification.
+* **Occlusion Handling:** Specifically trained to distinguish between medical masks and non-mask occlusions such as hands or clothing.
 
 ---
 
